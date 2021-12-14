@@ -14,8 +14,11 @@
     "lottie-react-native": "^5.0.1",
     "react": "17.0.2",
     "react-native": "0.65.1",
+    "react-native-contacts": "^7.0.3",
+    "react-native-pager-view": "^5.4.9",
     "react-native-permissions": "^3.2.0",
     "react-native-sms": "^1.11.0",
+    "react-native-tab-view": "^3.1.1",
     "react-native-toast-notifications": "^3.2.3"
   },
   "devDependencies": {

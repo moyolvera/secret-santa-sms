@@ -6,12 +6,12 @@ import {
   Linking,
   Modal,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from 'react-native';
 import Toast, {
@@ -21,6 +21,8 @@ import Toast, {
 import LottieView from 'lottie-react-native';
 import * as SendSMS from 'react-native-sms';
 import { check, PERMISSIONS, RESULTS, request } from 'react-native-permissions';
+import { Route, TabBar, TabView } from 'react-native-tab-view';
+import Contacts, { Contact } from 'react-native-contacts';
 
 function shuffle(data: PeopleItem[]) {
   return data.sort(() => Math.random() - 0.5);
@@ -88,8 +90,6 @@ const Fab = ({ data }: FabProps) => {
 
     for (const result of results) {
       await new Promise<void>(resolve => {
-        console.log('notify to ', result.recipient.phone);
-
         SendSMS.send(
           {
             body: `Hola ${result.santa.name}, has sido elegid@ para darle regalo a ${result.recipient.name} en la proxima navidad!`,
@@ -100,9 +100,6 @@ const Fab = ({ data }: FabProps) => {
             directSend: true
           },
           (completed, cancelled, error) => {
-            console.log('send sms to: ', result.santa.phone);
-            console.log({ completed, cancelled, error });
-
             if (completed) {
               toastRef.current?.show(`${result.santa.name} has been notified!`);
             } else if (cancelled) {
@@ -159,15 +156,66 @@ type PeopleItem = {
   phone: string;
 };
 
+interface ContactItem extends PeopleItem {
+  id: string;
+}
+
 type PeopleItemProps = {
   item: PeopleItem;
   onPress: (index: number) => void;
+  unncensor?: boolean;
+  selectable?: boolean;
+  onSelect?: (isSelected: boolean, item: PeopleItem) => void;
 };
 
-const People = ({ item, onPress }: PeopleItemProps) => {
-  const { name, phone } = item;
+type PeopleSelectedProps = {
+  onPress: () => void;
+  children: React.ReactNode;
+};
+
+const PeopleSelected = ({ onPress, children }: PeopleSelectedProps) => {
   return (
-    <View style={style.people}>
+    <TouchableOpacity onPress={onPress} style={style.people}>
+      {children}
+    </TouchableOpacity>
+  );
+};
+
+type PeopleNonSelectedProps = {
+  children: React.ReactNode;
+};
+
+const PeopleNonSelected = ({ children }: PeopleNonSelectedProps) => {
+  return <View style={style.people}>{children}</View>;
+};
+
+const People = ({
+  item,
+  onPress,
+  unncensor,
+  selectable,
+  onSelect
+}: PeopleItemProps) => {
+  const { name, phone } = item;
+  const [isSelected, setIsSelected] = React.useState(false);
+
+  function onPressItem() {
+    setIsSelected(!isSelected);
+  }
+
+  const Wrapper = React.useMemo(
+    () => (selectable ? PeopleSelected : PeopleNonSelected),
+    [selectable]
+  );
+
+  React.useEffect(() => {
+    if (onSelect) {
+      onSelect(isSelected, item);
+    }
+  }, [isSelected]);
+
+  return (
+    <Wrapper onPress={onPressItem}>
       <View style={style.santa}>
         <Image
           source={{
@@ -178,14 +226,22 @@ const People = ({ item, onPress }: PeopleItemProps) => {
       </View>
       <View style={style.flex}>
         <Text style={style.bold}>{name}</Text>
-        <Text>{phone.replace(/^.{7}/g, '*******')}</Text>
+        <Text>{unncensor ? phone : phone.replace(/^.{7}/g, '*******')}</Text>
       </View>
-      <TouchableOpacity onPress={() => onPress(0)}>
-        <View style={style.deleteWrapper}>
-          <Text style={style.delete}>X</Text>
+      {selectable ? (
+        <View>
+          <View style={style.selectWrapper}>
+            {isSelected && <View style={style.selected} />}
+          </View>
         </View>
-      </TouchableOpacity>
-    </View>
+      ) : (
+        <TouchableOpacity onPress={() => onPress(0)}>
+          <View style={style.deleteWrapper}>
+            <Text style={style.delete}>X</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+    </Wrapper>
   );
 };
 
@@ -267,17 +323,231 @@ const Input = ({ onSavePeople }: InputProps) => {
   );
 };
 
-const Container = () => {
-  const [people, setPeople] = React.useState<PeopleItem[]>([
-    { name: 'John', phone: '1234567890' }
+type ManualListScreenProps = {
+  people: PeopleItem[];
+  savePeople: (name: string, phone: string) => void;
+  removePeople: (number: string) => void;
+};
+
+const ManualListScreen = ({
+  savePeople,
+  people,
+  removePeople
+}: ManualListScreenProps) => {
+  return (
+    <View style={style.flex}>
+      <Input onSavePeople={savePeople} />
+      {people.length === 0 ? (
+        <Text style={style.subtitle}>
+          You need to add people to start the Secret Santa
+        </Text>
+      ) : (
+        <Text style={style.subtitle}>
+          You have added {people.length} people
+        </Text>
+      )}
+      <FlatList
+        data={people}
+        keyExtractor={item => item.name}
+        renderItem={({ item }) => (
+          <People item={item} onPress={() => removePeople(item.phone)} />
+        )}
+      />
+    </View>
+  );
+};
+
+type ContactsListScreenProps = {
+  people: PeopleItem[];
+  savePeople: (name: string, phone: string) => void;
+  removePeople: (number: string) => void;
+};
+
+const ContactsListScreen = ({
+  people,
+  savePeople,
+  removePeople
+}: ContactsListScreenProps) => {
+  const [hasPermission, setHasPermission] = React.useState(false);
+  const [contacts, setContacts] = React.useState<ContactItem[]>([]);
+
+  React.useEffect(() => {
+    check(PERMISSIONS.ANDROID.READ_CONTACTS).then(result => {
+      if (result === RESULTS.GRANTED) {
+        setHasPermission(true);
+      } else {
+        request(PERMISSIONS.ANDROID.READ_CONTACTS).then(result => {
+          if (result === RESULTS.GRANTED) {
+            setHasPermission(true);
+          } else {
+            Alert.alert(
+              'Permission Required',
+              'Please enable read contact permission in your settings.',
+              [
+                {
+                  text: 'Cancel',
+                  onPress: () => {},
+                  style: 'cancel'
+                },
+                { text: 'OK', onPress: () => Linking.openSettings() }
+              ],
+              { cancelable: false }
+            );
+          }
+        });
+      }
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (hasPermission) {
+      Contacts.getAll().then((contacts: Contact[]) => {
+        const people = contacts
+          .map(contact => {
+            const { displayName, phoneNumbers, recordID } = contact;
+            const phone = phoneNumbers[0]?.number
+              .replace('+52', '')
+              .replace(/ /g, '');
+            return { id: recordID, name: displayName, phone };
+          })
+          .filter(i => !!i.phone);
+
+        const sortedPeople = people.sort((a, b) => {
+          if (a.name < b.name) {
+            return -1;
+          }
+          if (a.name > b.name) {
+            return 1;
+          }
+          return 0;
+        });
+
+        setContacts(sortedPeople);
+      });
+    }
+  }, [hasPermission]);
+
+  function handleSelect(isSelected: boolean, item: PeopleItem) {
+    if (isSelected) {
+      savePeople(item.name, item.phone);
+    } else {
+      removePeople(item.phone);
+    }
+  }
+
+  return (
+    <View style={style.flex}>
+      <View style={style.marginTop20} />
+      {people.length === 0 ? (
+        <Text style={style.subtitle}>
+          You need to add people to start the Secret Santa
+        </Text>
+      ) : (
+        <Text style={style.subtitle}>
+          You have added {people.length} people
+        </Text>
+      )}
+      <FlatList
+        data={contacts}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <People
+            item={item}
+            unncensor
+            selectable
+            onPress={() => {}}
+            onSelect={handleSelect}
+          />
+        )}
+      />
+    </View>
+  );
+};
+
+const renderLabel = ({
+  route,
+  focused
+}: {
+  route: Route;
+  focused: boolean;
+}) => {
+  return (
+    <Text style={focused ? style.tabLabelFocused : style.tabLabel}>
+      {route.title}
+    </Text>
+  );
+};
+
+// @ts-ignore-next-line
+const renderTabBar = props => (
+  <TabBar
+    {...props}
+    indicatorStyle={{ backgroundColor: '#41D3BD' }}
+    style={{ backgroundColor: '#FFFFEC' }}
+    renderLabel={renderLabel}
+  />
+);
+
+interface TabViewWrapperProps
+  extends ContactsListScreenProps,
+    ManualListScreenProps {}
+
+const TabViewWrapper = ({
+  people,
+  savePeople,
+  removePeople
+}: TabViewWrapperProps) => {
+  const layout = useWindowDimensions();
+
+  const [index, setIndex] = React.useState(0);
+  const [routes] = React.useState([
+    { key: 'manual', title: 'Manual' },
+    { key: 'contacts', title: 'Contacts' }
   ]);
+
+  const renderScene = ({ route }: { route: Route }) => {
+    switch (route.key) {
+      case 'manual':
+        return (
+          <ManualListScreen
+            people={people}
+            savePeople={savePeople}
+            removePeople={removePeople}
+          />
+        );
+      case 'contacts':
+        return (
+          <ContactsListScreen
+            people={people}
+            savePeople={savePeople}
+            removePeople={removePeople}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <TabView
+      renderTabBar={renderTabBar}
+      navigationState={{ index, routes }}
+      renderScene={renderScene}
+      onIndexChange={setIndex}
+      initialLayout={{ width: layout.width, height: layout.height }}
+    />
+  );
+};
+
+const Container = () => {
+  const [people, setPeople] = React.useState<PeopleItem[]>([]);
 
   function savePeople(name: string, phone: string) {
     setPeople([...people, { name, phone }]);
   }
 
-  function removePeople(index: number) {
-    setPeople(people.filter((_, i) => i !== index));
+  function removePeople(number: string) {
+    setPeople(people.filter(item => item.phone !== number));
   }
 
   React.useEffect(() => {
@@ -306,34 +576,20 @@ const Container = () => {
 
   return (
     <>
-      <SafeAreaView style={style.background}>
+      <SafeAreaView style={[style.background, style.wrapper]}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFEC" />
-        <ScrollView style={style.wrapper}>
-          <View style={style.marginList}>
-            <Text style={style.title}>Secret Santa</Text>
-            <Text style={style.subtitle}>
-              Add the people who is participating on secret santa and I will
-              notify them via SMS
-            </Text>
-            <Input onSavePeople={savePeople} />
-            {people.length === 0 ? (
-              <Text style={style.subtitle}>
-                You need to add people to start the Secret Santa
-              </Text>
-            ) : (
-              <Text style={style.subtitle}>
-                You have added {people.length} people
-              </Text>
-            )}
-            <FlatList
-              data={people}
-              keyExtractor={item => item.name}
-              renderItem={({ item }) => (
-                <People item={item} onPress={removePeople} />
-              )}
-            />
-          </View>
-        </ScrollView>
+        <View style={[style.flex, style.marginList]}>
+          <Text style={style.title}>Secret Santa</Text>
+          <Text style={style.subtitle}>
+            Add the people who is participating on secret santa and I will
+            notify them via SMS
+          </Text>
+          <TabViewWrapper
+            people={people}
+            removePeople={removePeople}
+            savePeople={savePeople}
+          />
+        </View>
       </SafeAreaView>
       <Fab data={people} />
     </>
@@ -385,6 +641,7 @@ const style = StyleSheet.create({
     borderRadius: 25
   },
   input: {
+    marginTop: 20,
     marginBottom: 20
   },
   inputText: {
@@ -448,6 +705,21 @@ const style = StyleSheet.create({
     height: 120,
     backgroundColor: 'red'
   },
+  selectWrapper: {
+    width: 22,
+    height: 22,
+    borderRadius: 25,
+    borderColor: '#41D3BD',
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  selected: {
+    backgroundColor: '#41D3BD',
+    height: 22,
+    width: 22,
+    borderRadius: 22 / 2
+  },
   deleteWrapper: {
     width: 22,
     height: 22,
@@ -463,7 +735,7 @@ const style = StyleSheet.create({
     fontSize: 12
   },
   marginList: {
-    marginBottom: 40
+    marginBottom: 10
   },
   status: {
     fontSize: 22,
@@ -471,6 +743,28 @@ const style = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     bottom: 200
+  },
+  tabLabel: {
+    color: '#3B7080',
+    fontWeight: 'normal',
+    width: '110%'
+  },
+  tabLabelFocused: {
+    color: '#41D3BD',
+    fontWeight: 'bold',
+    width: '110%'
+  },
+  marginTop20: {
+    marginTop: 20
+  },
+  search: {
+    width: '100%',
+    paddingVertical: 5,
+    paddingHorizontal: 5,
+    borderRadius: 3,
+    borderColor: '#b8bdc9',
+    borderWidth: 1,
+    marginBottom: 20
   }
 });
 
