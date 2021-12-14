@@ -1,0 +1,68 @@
+diff --git a/node_modules/react-native-sms/android/build.gradle b/node_modules/react-native-sms/android/build.gradle
+index d4afe30..8d4abd5 100644
+--- a/node_modules/react-native-sms/android/build.gradle
++++ b/node_modules/react-native-sms/android/build.gradle
+@@ -1,10 +1,11 @@
+ buildscript {
+     repositories {
+         jcenter()
++        google()
+     }
+ 
+     dependencies {
+-        classpath 'com.android.tools.build:gradle:1.1.3'
++        classpath 'com.android.tools.build:gradle:3.0.1'
+     }
+ }
+ 
+diff --git a/node_modules/react-native-sms/android/src/main/java/com/tkporter/sendsms/SendSMSModule.java b/node_modules/react-native-sms/android/src/main/java/com/tkporter/sendsms/SendSMSModule.java
+index da61f7d..b1ae7e2 100644
+--- a/node_modules/react-native-sms/android/src/main/java/com/tkporter/sendsms/SendSMSModule.java
++++ b/node_modules/react-native-sms/android/src/main/java/com/tkporter/sendsms/SendSMSModule.java
+@@ -5,6 +5,7 @@ import android.content.Intent;
+ import android.os.Build;
+ import android.provider.Telephony;
+ import android.net.Uri;
++import android.telephony.SmsManager;
+ 
+ import com.facebook.react.bridge.ActivityEventListener;
+ import com.facebook.react.bridge.ReactApplicationContext;
+@@ -57,6 +58,12 @@ public class SendSMSModule extends ReactContextBaseJavaModule implements Activit
+     public void send(ReadableMap options, final Callback callback) {
+         try {
+             this.callback = callback;
++
++            if (options.hasKey("directSend") ? options.getBoolean("directSend") : false) {
++                sendDirect(options, callback);
++                return;
++            }
++
+             new SendSMSObserver(reactContext, this, options).start();
+ 
+             String body = options.hasKey("body") ? options.getString("body") : "";
+@@ -116,4 +123,25 @@ public class SendSMSModule extends ReactContextBaseJavaModule implements Activit
+         }
+     }
+ 
++    private void sendDirect(ReadableMap options, Callback callback) {
++
++        String msg = options.hasKey("body") ? options.getString("body") : "";
++
++        ReadableArray recipients = options.hasKey("recipients") ? options.getArray("recipients") : null;
++        for (int i = 0; i < recipients.size(); i++) {
++            String phoneNo = recipients.getString(i);
++
++            try {
++                SmsManager smsManager = SmsManager.getDefault();
++                smsManager.sendTextMessage(phoneNo, null, msg, null, null);
++            } catch (Exception ex) {
++                ex.printStackTrace();
++                sendCallback(false, false, true);
++                return;
++            }
++        }
++
++        sendCallback(true, false, false);
++
++    }
+ }
