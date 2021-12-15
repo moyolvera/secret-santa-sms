@@ -152,13 +152,10 @@ const Fab = ({ data }: FabProps) => {
 };
 
 type PeopleItem = {
+  id: string;
   name: string;
   phone: string;
 };
-
-interface ContactItem extends PeopleItem {
-  id: string;
-}
 
 type PeopleItemProps = {
   item: PeopleItem;
@@ -350,7 +347,7 @@ const ManualListScreen = ({
         data={people}
         keyExtractor={item => item.name}
         renderItem={({ item }) => (
-          <People item={item} onPress={() => removePeople(item.phone)} />
+          <People item={item} onPress={() => removePeople(item.id)} />
         )}
       />
     </View>
@@ -369,7 +366,7 @@ const ContactsListScreen = ({
   removePeople
 }: ContactsListScreenProps) => {
   const [hasPermission, setHasPermission] = React.useState(false);
-  const [contacts, setContacts] = React.useState<ContactItem[]>([]);
+  const [contacts, setContacts] = React.useState<PeopleItem[]>([]);
 
   React.useEffect(() => {
     check(PERMISSIONS.ANDROID.READ_CONTACTS).then(result => {
@@ -431,7 +428,7 @@ const ContactsListScreen = ({
     if (isSelected) {
       savePeople(item.name, item.phone);
     } else {
-      removePeople(item.phone);
+      removePeople(item.id);
     }
   }
 
@@ -543,11 +540,18 @@ const Container = () => {
   const [people, setPeople] = React.useState<PeopleItem[]>([]);
 
   function savePeople(name: string, phone: string) {
-    setPeople([...people, { name, phone }]);
+    setPeople([
+      ...people,
+      {
+        id: `${name.toLocaleLowerCase().replace(/ /g, '')}_${phone}`,
+        name,
+        phone
+      }
+    ]);
   }
 
-  function removePeople(number: string) {
-    setPeople(people.filter(item => item.phone !== number));
+  function removePeople(id: string) {
+    setPeople(people.filter(item => item.id !== id));
   }
 
   React.useEffect(() => {
